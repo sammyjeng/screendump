@@ -1,7 +1,8 @@
-TARGET = iphone:14.4:10.0
+TARGET = iphone:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
+PACKAGE_BUILDNAME := rootless
 
 TOOL_NAME = screendumpd
 $(TOOL_NAME)_FILES = main.mm

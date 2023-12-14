@@ -1,9 +1,11 @@
 #include <errno.h>
 #include <substrate.h>
 #include <rfb/rfb.h>
-#import <xpc/xpc.h>
+#import <Foundation/Foundation.h>
+#import <IOSurface/IOSurfaceRef.h>
+#import <rootless.h>
 
-#define kSettingsPath @"//var/mobile/Library/Preferences/com.cosmosgenius.screendump.plist"
+#define kSettingsPath @"/var/jb/var/mobile/Library/Preferences/com.cosmosgenius.screendump.plist"
 
 static bool CCSisEnabled = true;
 static NSString *CCSPassword = nil;

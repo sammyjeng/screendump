@@ -2,10 +2,12 @@
 #include <substrate.h>
 #include <rfb/rfb.h>
 #import <notify.h>
+#import <UIKit/UIKit.h>
+#import <rootless.h>
 
 #undef NSLog
 
-#define kSettingsPath @"//var/mobile/Library/Preferences/com.cosmosgenius.screendump.plist"
+#define kSettingsPath @"/var/jb/var/mobile/Library/Preferences/com.cosmosgenius.screendump.plist"
 
 extern "C" UIImage* _UICreateScreenUIImage();
 
