@@ -5,8 +5,6 @@
 #import <IOSurface/IOSurfaceRef.h>
 #import <rootless.h>
 
-#define kSettingsPath @"/var/jb/var/mobile/Library/Preferences/com.cosmosgenius.screendump.plist"
-
 static bool CCSisEnabled = true;
 static NSString *CCSPassword = nil;
 static rfbScreenInfoPtr screen;

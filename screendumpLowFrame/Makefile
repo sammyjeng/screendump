@@ -2,7 +2,11 @@ TARGET = iphone:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-PACKAGE_BUILDNAME := rootless
+ifeq ($(THEOS_PACKAGE_SCHEME),rootless)
+	PACKAGE_BUILDNAME := rootless
+else
+	PACKAGE_BUILDNAME := rootful
+endif
 
 TOOL_NAME = screendumpd
 $(TOOL_NAME)_FILES = main.mm
@@ -24,3 +28,14 @@ include $(THEOS_MAKE_PATH)/tool.mk
 SUBPROJECTS += hooks
 
 include $(THEOS_MAKE_PATH)/aggregate.mk
+
+ifeq ($(THEOS_PACKAGE_SCHEME),rootless)
+after-screendumpd-stage::
+	$(ECHO_NOTHING) rm $(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.julioverne.screendumpd.plist$(ECHO_END)
+	$(ECHO_NOTHING) mv $(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.julioverne.screendumpd.rootless.plist $(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.julioverne.screendumpd.plist$(ECHO_END)
+	$(ECHO_NOTHING)$(FAKEROOT) chown root:wheel $(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.julioverne.screendumpd.plist$(ECHO_END)
+else
+after-screendumpd-stage::
+	$(ECHO_NOTHING) rm $(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.julioverne.screendumpd.rootless.plist$(ECHO_END)
+	$(ECHO_NOTHING)$(FAKEROOT) chown root:wheel $(THEOS_STAGING_DIR)/Library/LaunchDaemons/com.julioverne.screendumpd.plist$(ECHO_END)
+endif
