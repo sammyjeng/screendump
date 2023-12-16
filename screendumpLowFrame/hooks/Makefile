@@ -1,6 +1,7 @@
-TARGET = iphone:14.4:10.0
+TARGET = iphone:16.5:14.0
 
 include $(THEOS)/makefiles/common.mk
+
 
 TWEAK_NAME = screendumpbb
 $(TWEAK_NAME)_FILES = Tweak.xm
