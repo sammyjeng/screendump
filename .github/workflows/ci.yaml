@@ -16,18 +16,6 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Theos Setup (Check Cache)
-        id: verify-cache
-        run: |
-          echo "::set-output name=heads::`git ls-remote https://github.com/theos/theos | head -n 1 | cut -f 1`-`git ls-remote https://github.com/theos/sdks | head -n 1 | cut -f 1`"
-
-      - name: Theos Setup (Use Cache)
-        id: cache
-        uses: actions/cache@v2
-        with:
-          path: ${{ github.workspace }}/theos
-          key: ${{ runner.os }}-${{ steps.verify-cache.outputs.heads }}
-
       - name: Theos Setup (Setup)
         uses: NyaMisty/theos-action@master
 
