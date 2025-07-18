@@ -63,11 +63,11 @@ jobs:
       - name: Theos Setup (Setup)
         uses: NyaMisty/theos-action@master
 
-      - name: Build Dev package - Rootful
-        run: |
-          cd screendumpLowFrame
-          make clean
-          make package FINALPACKAGE=1 PACKAGE_VERSION=dev-rootful
+      # - name: Build Dev package - Rootful
+      #   run: |
+      #     cd screendumpLowFrame
+      #     make clean
+      #     make package FINALPACKAGE=1 PACKAGE_VERSION=dev-rootful
 
       - name: Build Dev package - Rootless
         run: |
@@ -76,7 +76,7 @@ jobs:
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1 PACKAGE_VERSION=dev-rootless
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: screendump-packages
           path: ${{ github.workspace }}/screendumpLowFrame/packages/*.deb
