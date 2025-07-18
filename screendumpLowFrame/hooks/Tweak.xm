@@ -5,7 +5,7 @@
 #import <UIKit/UIKit.h>
 #import <rootless.h>
 
-#undef NSLog
+#define NSLog(args...) NSLog(@"[ScreenDump] " args)
 
 extern "C" UIImage* _UICreateScreenUIImage();
 
@@ -57,6 +57,7 @@ static BOOL isBlackScreen;
 }
 - (void)start
 {
+	NSLog(@"Starting screen capture with 0.4s interval");
 	dispatch_async(dispatch_get_main_queue(), ^(void){
 		[NSTimer scheduledTimerWithTimeInterval:0.4f target:self selector:@selector(capture) userInfo:nil repeats:YES];
 	});
@@ -75,11 +76,22 @@ static BOOL isBlackScreen;
 {
 	@autoreleasepool {
 		
-		if(isBlackScreen || !isEnabled) {
+		if(isBlackScreen) {
+			NSLog(@"Skipping capture - screen is black");
 			return;
 		}
 		
+		if(!isEnabled) {
+			NSLog(@"Skipping capture - screendump is disabled");
+			return;
+		}
+		
+		NSLog(@"Starting screen capture...");
 		UIImage* image = _UICreateScreenUIImage();
+		if (!image) {
+			NSLog(@"Failed to create screen image");
+			return;
+		}
 		
 		CGSize newS = CGSizeMake(image.size.width, image.size.height);
 		
@@ -93,14 +105,20 @@ static BOOL isBlackScreen;
 		
 		size_t size = iWidth * iHeight * iBytesPerPixel;
 		
+		NSLog(@"Screen dimensions: %lux%lu, size: %zu bytes", (unsigned long)iWidth, (unsigned long)iHeight, size);
+		
 		unsigned char * bytes = [self pixelBRGABytesFromImageRef:imageRef];
 		
 		dispatch_async(dispatch_get_global_queue( DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
 			@autoreleasepool {
 				NSData *imageData = [NSData dataWithBytesNoCopy:bytes length:size freeWhenDone:YES];
-				[imageData writeToFile:@"//tmp/screendump_Buff.tmp" atomically:YES];
-				[@{@"width":@(iWidth), @"height":@(iHeight), @"size":@(size),} writeToFile:@"//tmp/screendump_Info.tmp" atomically:YES];
+				BOOL success1 = [imageData writeToFile:@"/tmp/screendump_Buff.tmp" atomically:YES];
+				BOOL success2 = [@{@"width":@(iWidth), @"height":@(iHeight), @"size":@(size),} writeToFile:@"/tmp/screendump_Info.tmp" atomically:YES];
+				
+				NSLog(@"File write success - Buffer: %@, Info: %@", success1 ? @"YES" : @"NO", success2 ? @"YES" : @"NO");
+				
 				notify_post("com.julioverne.screendump/frameChanged");
+				NSLog(@"Posted frameChanged notification");
 			}
 		});
 	}
@@ -111,8 +129,40 @@ static BOOL isBlackScreen;
 - (void)applicationDidFinishLaunching:(id)application
 {
 	%orig;
+	NSLog(@"SpringBoard finished launching - initializing CapturerScreen");
 	CapturerScreen* cap = [[CapturerScreen alloc] init];
 	[cap start];
+}
+%end
+
+%hook UIApplication
+- (void)sendEvent:(UIEvent *)event
+{
+	%orig;
+	if (event.type == UIEventTypeTouches) {
+		NSSet *touches = [event allTouches];
+		for (UITouch *touch in touches) {
+			CGPoint location = [touch locationInView:nil];
+			NSString *phase = @"Unknown";
+			switch (touch.phase) {
+				case UITouchPhaseBegan:
+					phase = @"Began";
+					break;
+				case UITouchPhaseMoved:
+					phase = @"Moved";
+					break;
+				case UITouchPhaseEnded:
+					phase = @"Ended";
+					break;
+				case UITouchPhaseCancelled:
+					phase = @"Cancelled";
+					break;
+				default:
+					break;
+			}
+			NSLog(@"Touch %@ at (%.1f, %.1f)", phase, location.x, location.y);
+		}
+	}
 }
 %end
 
@@ -126,8 +176,10 @@ static void screenDisplayStatus(CFNotificationCenterRef center, void* observer, 
     notify_cancel(token);
     if(!state) {
 		isBlackScreen = YES;
+		NSLog(@"Screen status changed: BLACK");
     } else {
 		isBlackScreen = NO;
+		NSLog(@"Screen status changed: ON");
 	}
 }
 
@@ -135,15 +187,22 @@ static void loadPrefs(CFNotificationCenterRef center, void* observer, CFStringRe
 {
 	@autoreleasepool {
 		NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:@"com.cosmosgenius.screendump"];
-		isEnabled = [[defaults objectForKey:@"CCSisEnabled"]?:@NO boolValue];
+		BOOL newEnabled = [[defaults objectForKey:@"CCSisEnabled"]?:@NO boolValue];
+		if (newEnabled != isEnabled) {
+			isEnabled = newEnabled;
+			NSLog(@"Preferences changed: isEnabled = %@", isEnabled ? @"YES" : @"NO");
+		}
 	}
 }
 
 %ctor
 {
+	NSLog(@"ScreenDump tweak loading...");
+	
 	CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, screenDisplayStatus, CFSTR("com.apple.iokit.hid.displayStatus"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 	
 	CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, loadPrefs, CFSTR("com.cosmosgenius.screendump/preferences.changed"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 	
 	loadPrefs(NULL, NULL, NULL, NULL, NULL);
+	NSLog(@"ScreenDump tweak loaded - isEnabled: %@, isBlackScreen: %@", isEnabled ? @"YES" : @"NO", isBlackScreen ? @"YES" : @"NO");
 }
