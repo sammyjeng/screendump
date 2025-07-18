@@ -4,6 +4,7 @@ on:
   release:
     types:
       - created
+  workflow_dispatch:
 
 jobs:
   build:
@@ -47,3 +48,35 @@ jobs:
             ${{ github.workspace }}/screendumpLowFrame/packages/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-artifacts:
+    runs-on: macos-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Theos Setup (Setup)
+        uses: NyaMisty/theos-action@master
+
+      - name: Build Dev package - Rootful
+        run: |
+          cd screendumpLowFrame
+          make clean
+          make package FINALPACKAGE=1 PACKAGE_VERSION=dev-rootful
+
+      - name: Build Dev package - Rootless
+        run: |
+          cd screendumpLowFrame
+          make clean
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1 PACKAGE_VERSION=dev-rootless
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: screendump-packages
+          path: ${{ github.workspace }}/screendumpLowFrame/packages/*.deb
