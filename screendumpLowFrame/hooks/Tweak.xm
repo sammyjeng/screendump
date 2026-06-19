@@ -65,7 +65,10 @@ static BOOL isBlackScreen;
 - (UIImage *)imageWithImage:(UIImage *)image scaledToSize:(CGSize)newSize
 {
     //UIGraphicsBeginImageContext(newSize);
-    UIGraphicsBeginImageContextWithOptions(newSize, NO, 0.0f);
+    // Force 1x scale: capture at point resolution (e.g. 375x667) to keep the
+    // VNC stream light. A 0.0 scale would use the device's native 2x/3x and
+    // double the frame size ("LowFrame").
+    UIGraphicsBeginImageContextWithOptions(newSize, NO, 1.0f);
     [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
     UIImage *newImage = UIGraphicsGetImageFromCurrentImageContext();    
     UIGraphicsEndImageContext();
@@ -92,7 +95,7 @@ static BOOL isBlackScreen;
 			NSLog(@"Failed to create screen image");
 			return;
 		}
-		
+
 		CGSize newS = CGSizeMake(image.size.width, image.size.height);
 		
 		image = [[self imageWithImage:image scaledToSize:newS] copy];

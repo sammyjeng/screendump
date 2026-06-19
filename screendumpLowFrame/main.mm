@@ -160,24 +160,158 @@ static void VNCBlack()
     screen->frameBuffer = (char *)malloc(size_image);
 }
 
+// Keeps the just-replaced framebuffer alive for one more resize cycle so an
+// in-flight read on the rfb event-loop thread can't hit freed memory. Rotations
+// are seconds apart, so this is freed long before it could be reused.
+static char *prevFrameBuffer = NULL;
+
+// Re-shape the live VNC session to a new frame geometry. Called when the device
+// rotates (portrait<->landscape) and _UICreateScreenUIImage starts returning a
+// differently sized image; rfbNewFramebuffer notifies connected clients (noVNC
+// honours this via the ExtendedDesktopSize pseudo-encoding).
+static void VNCResize(size_t newWidth, size_t newHeight)
+{
+	size_t newSize = newWidth * newHeight * byte_per_pixel;
+	char *newBuffer = (char *)malloc(newSize);
+	if(newBuffer == NULL) {
+		return;
+	}
+	memset(newBuffer, 0, newSize);
+
+	if(prevFrameBuffer) {
+		free(prevFrameBuffer);
+	}
+	prevFrameBuffer = screen->frameBuffer;
+
+	width = newWidth;
+	height = newHeight;
+	size_image = newSize;
+
+	rfbNewFramebuffer(screen, newBuffer, (int)width, (int)height, bits_per_sample, 3, byte_per_pixel);
+
+	// rfbNewFramebuffer resets serverFormat to defaults; restore the BGRA byte
+	// order that matches the pixels the hook writes.
+	screen->serverFormat.redShift = bits_per_sample * 2;
+	screen->serverFormat.greenShift = bits_per_sample * 1;
+	screen->serverFormat.blueShift = bits_per_sample * 0;
+}
+
+#include <dlfcn.h>
+@interface FBSOrientationObserver : NSObject
+- (NSInteger)activeInterfaceOrientation;
+@end
+
+// Read the live interface orientation via FrontBoardServices (which talks to
+// backboardd, so it works even from this daemon — unlike GSMainScreenOrientation
+// or UIApplication's orientation accessors, which report SpringBoard's own
+// portrait lock). Returns a UIInterfaceOrientation, or -1 if unavailable.
+static int currentScreenOrientation(void)
+{
+	static FBSOrientationObserver *observer = nil;
+	static bool tried = false;
+	@try {
+		if(!tried) {
+			tried = true;
+			dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_LAZY);
+			Class cls = NSClassFromString(@"FBSOrientationObserver");
+			if(cls) observer = [(FBSOrientationObserver *)[cls alloc] init];
+		}
+		if(observer) {
+			return (int)[observer activeInterfaceOrientation];
+		}
+	} @catch(NSException *e) {}
+	return -1;
+}
+
+// UIInterfaceOrientation values reported by FBSOrientationObserver.
+#define SD_ORIENT_PORTRAIT      1
+#define SD_ORIENT_UPSIDEDOWN    2
+#define SD_ORIENT_LANDSCAPE_R   3
+#define SD_ORIENT_LANDSCAPE_L   4
+
+// Current orientation and the native (portrait-baked) capture dimensions. The
+// hook always emits a portrait image; we rotate it here so the VNC output (and
+// the touch coordinates we inject) stay upright in landscape.
+static int gOrientation = SD_ORIENT_PORTRAIT;
+static size_t nativeW = 0;
+static size_t nativeH = 0;
+
+// Copy the native portrait frame into the live framebuffer, rotating to match
+// the current interface orientation. src is nativeW x nativeH BGRA; the
+// destination geometry (width x height) was already set by VNCResize.
+static void renderFrame(const uint8_t *src, size_t srcLen)
+{
+	int nw = (int)nativeW, nh = (int)nativeH;
+	if(nw <= 0 || nh <= 0) return;
+	if(srcLen < (size_t)nw * nh * 4) return;
+
+	const uint32_t *s = (const uint32_t *)src;
+	uint32_t *d = (uint32_t *)screen->frameBuffer;
+
+	if(gOrientation == SD_ORIENT_LANDSCAPE_R) {        // rotate 90° counter-clockwise
+		int dstW = nh;                                  // dest is nh x nw
+		for(int y = 0; y < nh; y++)
+			for(int x = 0; x < nw; x++)
+				d[(nw - 1 - x) * dstW + y] = s[y * nw + x];
+	} else if(gOrientation == SD_ORIENT_LANDSCAPE_L) { // rotate 90° clockwise
+		int dstW = nh;
+		for(int y = 0; y < nh; y++)
+			for(int x = 0; x < nw; x++)
+				d[x * dstW + (nh - 1 - y)] = s[y * nw + x];
+	} else if(gOrientation == SD_ORIENT_UPSIDEDOWN) {  // rotate 180°
+		int dstW = nw;
+		for(int y = 0; y < nh; y++)
+			for(int x = 0; x < nw; x++)
+				d[(nh - 1 - y) * dstW + (nw - 1 - x)] = s[y * nw + x];
+	} else {                                            // portrait, straight copy
+		memcpy(d, s, (size_t)nw * nh * 4);
+	}
+}
+
 static void upFrame()
 {
 	if(size_image == 0) {
 		VNCSetup();
 	}
-	
+
 	if(screen == NULL) {
         return;
     }
-	
+
 	@try {
 		@autoreleasepool {
+			// Follow orientation changes each frame: the capture is always
+			// portrait, so a landscape device needs the framebuffer reshaped
+			// (swapped dimensions) and the pixels rotated to stay upright.
+			NSDictionary* frameInfo = [NSDictionary dictionaryWithContentsOfFile:@"//tmp/screendump_Info.tmp"];
+			if(frameInfo) {
+				size_t newWidth = [frameInfo[@"width"]?:@(0) intValue];
+				size_t newHeight = [frameInfo[@"height"]?:@(0) intValue];
+				int orient = currentScreenOrientation();
+				if(orient <= 0) orient = SD_ORIENT_PORTRAIT;
+
+				if(newWidth && newHeight) {
+					nativeW = newWidth;
+					nativeH = newHeight;
+					gOrientation = orient;
+
+					bool landscape = (orient == SD_ORIENT_LANDSCAPE_R || orient == SD_ORIENT_LANDSCAPE_L);
+					size_t dispW = landscape ? newHeight : newWidth;
+					size_t dispH = landscape ? newWidth : newHeight;
+					if(dispW != width || dispH != height) {
+						VNCResize(dispW, dispH);
+					}
+				}
+			}
+
 			NSData *data = [[NSFileManager defaultManager] contentsAtPath:@"//tmp/screendump_Buff.tmp"];
-			memcpy(screen->frameBuffer, (void*)data.bytes, data.length);
+			if(data) {
+				renderFrame((const uint8_t *)data.bytes, data.length);
+			}
 		}
 	}@catch(NSException*e){
 	}
-	
+
 	rfbMarkRectAsModified(screen, 0, 0, width, height);
 }
 
@@ -408,15 +542,27 @@ static void VNCPointerNew(int buttons, int x, int y, CGPoint location, int diff,
         fingerm = kIOHIDDigitizerEventRange | kIOHIDDigitizerEventTouch;
     } else return;
 
-    // XXX: avoid division in VNCPointer()
-    // x *= ratio_;
-    // y *= ratio_;
-
-    IOHIDFloat xf(x);
-    IOHIDFloat yf(y);
-
-    xf /= width;
-    yf /= height;
+    // The digitizer is fixed in the device's native (portrait) frame, so map the
+    // client's display-space click back through the same rotation renderFrame
+    // applied to the pixels. nativeW/nativeH are the portrait capture dimensions.
+    IOHIDFloat xf, yf;
+    int nw = (int)nativeW, nh = (int)nativeH;
+    if(nw <= 0 || nh <= 0) {
+        xf = (IOHIDFloat)x / width;
+        yf = (IOHIDFloat)y / height;
+    } else if(gOrientation == SD_ORIENT_LANDSCAPE_R) {
+        xf = (IOHIDFloat)(nw - 1 - y) / nw;
+        yf = (IOHIDFloat)x / nh;
+    } else if(gOrientation == SD_ORIENT_LANDSCAPE_L) {
+        xf = (IOHIDFloat)y / nw;
+        yf = (IOHIDFloat)(nh - 1 - x) / nh;
+    } else if(gOrientation == SD_ORIENT_UPSIDEDOWN) {
+        xf = (IOHIDFloat)(nw - 1 - x) / nw;
+        yf = (IOHIDFloat)(nh - 1 - y) / nh;
+    } else {
+        xf = (IOHIDFloat)x / nw;
+        yf = (IOHIDFloat)y / nh;
+    }
 
     IOHIDEventRef hand(IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), kIOHIDDigitizerTransducerTypeHand, 1<<22, 1, handm, 0, xf, yf, 0, 0, 0, 0, 0, 0));
     IOHIDEventSetIntegerValue(hand, kIOHIDEventFieldIsBuiltIn, true);
